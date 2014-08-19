@@ -5,17 +5,41 @@
     <title>Bearded Cyril — random Google task</title>
     <script src="vendor/way.bundle.min.js"></script>
     <script src="vendor/livescript-min.js"></script>
+    <script src="vendor/prelude-browser-min.js"></script>
+    <script src="vendor/async.js"></script>
   </head>
 
   <body>
+    <h1>Bearded Cyril</h1>
+    <h2 id="task">Randomizing, please wait...</h2>
 
     <script type="text/ls">
+      {flatten, map} = require \prelude-ls
+
       creds <- $.getJSON 'google.json'
-      auth-result <- gapi.auth.authorize do
+      <- gapi.auth.authorize do
         client_id: creds.web.client_id
         scope: <[https://www.googleapis.com/auth/tasks.readonly]>
         immediate: true
-      console.log auth-result
+
+      <- gapi.client.load \tasks, \v1
+      api = gapi.client.tasks
+
+      tasks = []
+      {items: tasklists} <- api.tasklists.list!execute
+
+      err, tasklists <- async.map tasklists, ({id}, cb) ->
+        {items} <- api.tasks.list do
+          tasklist: id
+          show-completed: false
+        .execute
+        cb null, items
+
+      tasks = flatten tasklists
+      titles = tasks |> map (.title)
+
+      idx = Math.random! * titles.length |> Math.floor
+      titles[idx] |> $ '#task' .text
     </script>
 
     <script>
