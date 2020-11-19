@@ -2,51 +2,86 @@
 
 <html>
   <head>
+    <meta charset="UTF-8" />
     <title>Bearded Cyril — random Google task</title>
-    <script src="vendor/way.bundle.min.js"></script>
-    <script src="vendor/livescript-min.js"></script>
-    <script src="vendor/prelude-browser-min.js"></script>
-    <script src="vendor/async.js"></script>
+    <script src="//apis.google.com/js/api.js"></script>
   </head>
 
   <body>
     <h1>Bearded Cyril</h1>
-    <h2 id="task">Randomizing, please wait...</h2>
-
-    <script type="text/ls">
-      {flatten, map} = require \prelude-ls
-
-      creds <- $.getJSON 'google.json'
-      <- gapi.auth.authorize do
-        client_id: creds.web.client_id
-        scope: <[https://www.googleapis.com/auth/tasks.readonly]>
-        immediate: true
-
-      <- gapi.client.load \tasks, \v1
-      api = gapi.client.tasks
-
-      tasks = []
-      {items: tasklists} <- api.tasklists.list!execute
-
-      err, tasklists <- async.map tasklists, ({id}, cb) ->
-        {items} <- api.tasks.list do
-          tasklist: id
-          show-completed: false
-        .execute
-        cb null, items
-
-      tasks = flatten tasklists
-      titles = tasks |> map (.title)
-
-      idx = Math.random! * titles.length |> Math.floor
-      titles[idx] |> $ '#task' .text
-    </script>
+    <h2 id="subtitle">Loading, please wait...</h2>
+    <ul id="tasks"></ul>
 
     <script>
-      function go() {
-        require('LiveScript').go();
+      function tick() {
+        subtitle.innerText += '.';
       }
+
+      async function fetchList(list) {
+        const get = gapi.client.tasks.tasks.list;
+        let pageToken = null;
+        let allItems = [];
+        do {
+          const {items, nextPageToken} = (await get({
+            tasklist: list.id,
+            showCompleted: false,
+            maxResults: 100,
+            pageToken: pageToken
+          })).result;
+          tick();
+          pageToken = nextPageToken;
+          allItems = allItems.concat(items);
+        } while (pageToken);
+        return allItems;
+      }
+
+      async function getList(list) {
+        const etag = list.etag;
+        const local = localStorage[etag];
+        if (local) return JSON.parse(local);
+
+        const items = await fetchList(list);
+        localStorage[etag] = JSON.stringify(items);
+        return items;
+      }
+
+      function render(items) {
+        for (const item of items) {
+          const li = document.createElement('li');
+          li.innerText = item.title;
+          tasks.appendChild(li);
+        }
+      }
+
+      function *shuffle(xs) {
+        const left = xs.slice();
+        while (left.length > 0) {
+          yield left.splice(Math.floor(Math.random() * left.length), 1)[0];
+        }
+      }
+
+      function *take(xs, count) {
+        let i = 0;
+        for (const item of xs[Symbol.iterator]()) {
+          if (i++ > count) break;
+          yield item;
+        }
+      }
+
+      async function go() {
+        const creds = await fetch('google.json').then(r => r.json());
+        await gapi.client.init({
+          clientId: creds.web.client_id,
+          discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/tasks/v1/rest'],
+          scope: 'https://www.googleapis.com/auth/tasks.readonly'
+        });
+        const api = gapi.client.tasks;
+        const lists = (await api.tasklists.list()).result.items;
+        const items = (await Promise.all(lists.map(getList))).flat();
+        render(take(shuffle(items), 16));
+      }
+
+      gapi.load('client', go);
     </script>
-    <script src="http://apis.google.com/js/client.js?onload=go"></script>
   </body>
 </html>
